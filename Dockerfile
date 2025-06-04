@@ -1,0 +1,47 @@
+FROM python:3.11-slim
+
+# Environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DJANGO_SETTINGS_MODULE=myproject.settings.production
+
+# System dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        postgresql-client \
+        curl \
+        build-essential \
+        libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app user
+RUN addgroup --system app && adduser --system --group app
+
+# Set work directory
+WORKDIR /app
+
+# Install Python dependencies
+COPY requirements/production.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy project
+COPY . /app/
+
+# Create static and media directories
+RUN mkdir -p /app/staticfiles /app/media
+
+# Collect static files
+RUN python manage.py collectstatic --noinput --settings=myproject.settings.production
+
+# Change ownership
+RUN chown -R app:app /app
+
+# Switch to app user
+USER app
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health/ || exit 1
+
+# Run gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "3", "--worker-class", "gevent", "--worker-connections", "1000", "myproject.wsgi:application"]
